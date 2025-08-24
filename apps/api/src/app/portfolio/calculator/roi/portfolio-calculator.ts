@@ -110,60 +110,22 @@ export class RoiPortfolioCalculator extends PortfolioCalculator {
     start: Date;
   } & AssetProfileIdentifier): SymbolMetrics {
     const currentExchangeRate = exchangeRates[format(new Date(), DATE_FORMAT)];
-    const currentValues: { [date: string]: Big } = {};
-    const currentValuesWithCurrencyEffect: { [date: string]: Big } = {};
     let fees = new Big(0);
-    let feesAtStartDate = new Big(0);
-    let feesAtStartDateWithCurrencyEffect = new Big(0);
     let feesWithCurrencyEffect = new Big(0);
-    let grossPerformance = new Big(0);
-    let grossPerformanceWithCurrencyEffect = new Big(0);
-    let grossPerformanceAtStartDate = new Big(0);
-    let grossPerformanceAtStartDateWithCurrencyEffect = new Big(0);
-    let grossPerformanceFromSells = new Big(0);
-    let grossPerformanceFromSellsWithCurrencyEffect = new Big(0);
-    let initialValue: Big;
-    let initialValueWithCurrencyEffect: Big;
-    let investmentAtStartDate: Big;
-    let investmentAtStartDateWithCurrencyEffect: Big;
-    const investmentValuesAccumulated: { [date: string]: Big } = {};
-    const investmentValuesAccumulatedWithCurrencyEffect: {
-      [date: string]: Big;
-    } = {};
-    const investmentValuesWithCurrencyEffect: { [date: string]: Big } = {};
-    let lastAveragePrice = new Big(0);
-    let lastAveragePriceWithCurrencyEffect = new Big(0);
-    const netPerformanceValues: { [date: string]: Big } = {};
-    const netPerformanceValuesWithCurrencyEffect: { [date: string]: Big } = {};
-    
-    // For ROI, we don't use time-weighted investment, just simple investment tracking
-    const timeWeightedInvestmentValues: { [date: string]: Big } = {};
-    const timeWeightedInvestmentValuesWithCurrencyEffect: {
-      [date: string]: Big;
-    } = {};
-
-    const totalAccountBalanceInBaseCurrency = new Big(0);
     let totalDividend = new Big(0);
     let totalDividendInBaseCurrency = new Big(0);
     let totalInterest = new Big(0);
     let totalInterestInBaseCurrency = new Big(0);
     let totalInvestment = new Big(0);
-    let totalInvestmentFromBuyTransactions = new Big(0);
-    let totalInvestmentFromBuyTransactionsWithCurrencyEffect = new Big(0);
     let totalInvestmentWithCurrencyEffect = new Big(0);
     let totalLiabilities = new Big(0);
     let totalLiabilitiesInBaseCurrency = new Big(0);
-    let totalQuantityFromBuyTransactions = new Big(0);
     let totalUnits = new Big(0);
-    let valueAtStartDate: Big;
-    let valueAtStartDateWithCurrencyEffect: Big;
 
-    // Clone orders to keep the original values in this.orders
-    let orders: PortfolioOrderItem[] = cloneDeep(
-      this.activities.filter(({ SymbolProfile }) => {
-        return SymbolProfile.symbol === symbol;
-      })
-    );
+    // Get orders for this symbol
+    const orders: PortfolioOrderItem[] = this.activities.filter(({ SymbolProfile }) => {
+      return SymbolProfile.symbol === symbol;
+    });
 
     if (orders.length <= 0) {
       return {
@@ -202,31 +164,21 @@ export class RoiPortfolioCalculator extends PortfolioCalculator {
       };
     }
 
-    const dateOfFirstTransaction = new Date(orders[0].date);
-
     const endDateString = format(end, DATE_FORMAT);
-    const startDateString = format(start, DATE_FORMAT);
-
-    const unitPriceAtStartDate = marketSymbolMap[startDateString]?.[symbol];
     let unitPriceAtEndDate = marketSymbolMap[endDateString]?.[symbol];
 
-    let latestActivity = orders[orders.length - 1];
-
+    // Fallback to manual price if needed
+    const latestActivity = orders[orders.length - 1];
     if (
       dataSource === 'MANUAL' &&
       ['BUY', 'SELL'].includes(latestActivity?.type) &&
       latestActivity?.unitPrice &&
       !unitPriceAtEndDate
     ) {
-      // For BUY / SELL activities with a MANUAL data source where no historical market price is available,
-      // the calculation should fall back to using the activity's unit price.
       unitPriceAtEndDate = latestActivity.unitPrice;
     }
 
-    if (
-      !unitPriceAtEndDate ||
-      (!unitPriceAtStartDate && isBefore(dateOfFirstTransaction, start))
-    ) {
+    if (!unitPriceAtEndDate) {
       return {
         currentValues: {},
         currentValuesWithCurrencyEffect: {},
@@ -263,126 +215,62 @@ export class RoiPortfolioCalculator extends PortfolioCalculator {
       };
     }
 
-    // Add a synthetic order at the start and the end date for ROI calculation
-    orders.push({
-      date: startDateString,
-      fee: new Big(0),
-      feeInBaseCurrency: new Big(0),
-      itemType: 'start',
-      quantity: new Big(0),
-      SymbolProfile: {
-        dataSource,
-        symbol
-      },
-      type: 'BUY',
-      unitPrice: unitPriceAtStartDate
-    });
+    // Process all orders for ROI calculation
+    for (const order of orders) {
+      const factor = getFactor(order.type);
+      const orderDate = format(new Date(order.date), DATE_FORMAT);
+      const exchangeRateForOrder = exchangeRates[orderDate] || 1;
 
-    orders.push({
-      date: endDateString,
-      fee: new Big(0),
-      feeInBaseCurrency: new Big(0),
-      itemType: 'end',
-      quantity: new Big(0),
-      SymbolProfile: {
-        dataSource,
-        symbol
-      },
-      type: 'BUY',
-      unitPrice: unitPriceAtEndDate
-    });
-
-    orders = sortBy(orders, (order) => {
-      return order.date;
-    });
-
-    const indexOfStartOrder = orders.findIndex((order) => {
-      return order.itemType === 'start';
-    });
-
-    const indexOfEndOrder = orders.findIndex((order) => {
-      return order.itemType === 'end';
-    });
-
-    let totalInvestmentForROI = new Big(0);
-    let totalInvestmentWithCurrencyEffectForROI = new Big(0);
-
-    // Calculate simple investment totals for ROI
-    for (let i = 0; i < indexOfEndOrder; i++) {
-      const order = orders[i];
-
-      if (['BUY', 'SELL'].includes(order.type) && order.itemType !== 'start') {
-        const factor = getFactor(order.type);
-
+      if (['BUY', 'SELL'].includes(order.type)) {
         const orderValue = order.quantity.mul(order.unitPrice);
-        const orderValueWithCurrencyEffect = orderValue.mul(
-          exchangeRates[order.date]
-        );
+        const orderValueWithCurrencyEffect = orderValue.mul(exchangeRateForOrder);
 
-        totalInvestmentForROI = totalInvestmentForROI.plus(
-          orderValue.mul(factor)
-        );
-        totalInvestmentWithCurrencyEffectForROI = totalInvestmentWithCurrencyEffectForROI.plus(
+        totalInvestment = totalInvestment.plus(orderValue.mul(factor));
+        totalInvestmentWithCurrencyEffect = totalInvestmentWithCurrencyEffect.plus(
           orderValueWithCurrencyEffect.mul(factor)
         );
 
-        if (order.feeInBaseCurrency) {
-          feesWithCurrencyEffect = feesWithCurrencyEffect.plus(
-            order.feeInBaseCurrency
-          );
-        }
+        totalUnits = totalUnits.plus(order.quantity.mul(factor));
 
         if (order.fee) {
           fees = fees.plus(order.fee);
         }
 
-        if (order.type === 'BUY') {
-          totalQuantityFromBuyTransactions = totalQuantityFromBuyTransactions.plus(
-            order.quantity
-          );
-          totalInvestmentFromBuyTransactions = totalInvestmentFromBuyTransactions.plus(
-            orderValue
-          );
-          totalInvestmentFromBuyTransactionsWithCurrencyEffect = totalInvestmentFromBuyTransactionsWithCurrencyEffect.plus(
-            orderValueWithCurrencyEffect
+        if (order.feeInBaseCurrency) {
+          feesWithCurrencyEffect = feesWithCurrencyEffect.plus(order.feeInBaseCurrency);
+        } else if (order.fee) {
+          feesWithCurrencyEffect = feesWithCurrencyEffect.plus(
+            order.fee.mul(exchangeRateForOrder)
           );
         }
-
-        totalUnits = totalUnits.plus(order.quantity.mul(factor));
-
-        if (order.type === 'DIVIDEND') {
-          totalDividend = totalDividend.plus(order.quantity);
-          totalDividendInBaseCurrency = totalDividendInBaseCurrency.plus(
-            orderValueWithCurrencyEffect
-          );
-        } else if (order.type === 'INTEREST') {
-          totalInterest = totalInterest.plus(order.quantity);
-          totalInterestInBaseCurrency = totalInterestInBaseCurrency.plus(
-            orderValueWithCurrencyEffect
-          );
-        } else if (order.type === 'LIABILITY') {
-          totalLiabilities = totalLiabilities.plus(order.quantity);
-          totalLiabilitiesInBaseCurrency = totalLiabilitiesInBaseCurrency.plus(
-            orderValueWithCurrencyEffect
-          );
-        }
+      } else if (order.type === 'DIVIDEND') {
+        totalDividend = totalDividend.plus(order.quantity);
+        totalDividendInBaseCurrency = totalDividendInBaseCurrency.plus(
+          order.quantity.mul(exchangeRateForOrder)
+        );
+      } else if (order.type === 'INTEREST') {
+        totalInterest = totalInterest.plus(order.quantity);
+        totalInterestInBaseCurrency = totalInterestInBaseCurrency.plus(
+          order.quantity.mul(exchangeRateForOrder)
+        );
+      } else if (order.type === 'LIABILITY') {
+        totalLiabilities = totalLiabilities.plus(order.quantity);
+        totalLiabilitiesInBaseCurrency = totalLiabilitiesInBaseCurrency.plus(
+          order.quantity.mul(exchangeRateForOrder)
+        );
       }
     }
 
-    // Simple ROI calculation - no time weighting
-    totalInvestment = totalInvestmentForROI;
-    totalInvestmentWithCurrencyEffect = totalInvestmentWithCurrencyEffectForROI;
-
+    // Calculate current value
     const currentValue = totalUnits.mul(unitPriceAtEndDate);
     const currentValueWithCurrencyEffect = currentValue.mul(currentExchangeRate);
 
-    // Calculate gross performance
-    grossPerformance = currentValue.minus(totalInvestment);
-    grossPerformanceWithCurrencyEffect = currentValueWithCurrencyEffect.minus(
+    // Calculate ROI performance
+    const grossPerformance = currentValue.minus(totalInvestment);
+    const grossPerformanceWithCurrencyEffect = currentValueWithCurrencyEffect.minus(
       totalInvestmentWithCurrencyEffect
     );
 
-    // Net performance (subtract fees)
     const netPerformance = grossPerformance.minus(fees);
     const netPerformanceWithCurrencyEffect = grossPerformanceWithCurrencyEffect.minus(
       feesWithCurrencyEffect
@@ -408,33 +296,11 @@ export class RoiPortfolioCalculator extends PortfolioCalculator {
       );
     }
 
-    // Set up chart data (simplified for ROI)
+    // Create simple maps for ROI
     const netPerformancePercentageWithCurrencyEffectMap: { [key: string]: Big } = {};
     const netPerformanceWithCurrencyEffectMap: { [key: string]: Big } = {};
-
-    // Use 'max' as the key for simple ROI calculation
     netPerformancePercentageWithCurrencyEffectMap['max'] = netPerformancePercentageWithCurrencyEffect;
     netPerformanceWithCurrencyEffectMap['max'] = netPerformanceWithCurrencyEffect;
-
-    if (unitPriceAtStartDate) {
-      initialValue = totalUnits.mul(unitPriceAtStartDate);
-      initialValueWithCurrencyEffect = initialValue.mul(
-        exchangeRates[startDateString]
-      );
-      
-      investmentAtStartDate = totalInvestment;
-      investmentAtStartDateWithCurrencyEffect = totalInvestmentWithCurrencyEffect;
-      
-      valueAtStartDate = initialValue;
-      valueAtStartDateWithCurrencyEffect = initialValueWithCurrencyEffect;
-    } else {
-      initialValue = new Big(0);
-      initialValueWithCurrencyEffect = new Big(0);
-      investmentAtStartDate = new Big(0);
-      investmentAtStartDateWithCurrencyEffect = new Big(0);
-      valueAtStartDate = new Big(0);
-      valueAtStartDateWithCurrencyEffect = new Big(0);
-    }
 
     return {
       currentValues: {
@@ -449,8 +315,8 @@ export class RoiPortfolioCalculator extends PortfolioCalculator {
       grossPerformancePercentageWithCurrencyEffect,
       grossPerformanceWithCurrencyEffect,
       hasErrors: false,
-      initialValue,
-      initialValueWithCurrencyEffect,
+      initialValue: totalInvestment,
+      initialValueWithCurrencyEffect: totalInvestmentWithCurrencyEffect,
       investmentValuesAccumulated: {
         [endDateString]: totalInvestment
       },
@@ -470,7 +336,7 @@ export class RoiPortfolioCalculator extends PortfolioCalculator {
         [endDateString]: netPerformanceWithCurrencyEffect
       },
       netPerformanceWithCurrencyEffectMap,
-      timeWeightedInvestment: totalInvestment, // For ROI, time-weighted = simple investment
+      timeWeightedInvestment: totalInvestment, // For ROI, no time weighting
       timeWeightedInvestmentValues: {
         [endDateString]: totalInvestment
       },
@@ -478,7 +344,7 @@ export class RoiPortfolioCalculator extends PortfolioCalculator {
         [endDateString]: totalInvestmentWithCurrencyEffect
       },
       timeWeightedInvestmentWithCurrencyEffect: totalInvestmentWithCurrencyEffect,
-      totalAccountBalanceInBaseCurrency,
+      totalAccountBalanceInBaseCurrency: new Big(0),
       totalDividend,
       totalDividendInBaseCurrency,
       totalInterest,

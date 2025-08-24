@@ -137,45 +137,45 @@ describe('RoiPortfolioCalculator', () => {
             dividend: new Big('0'),
             dividendInBaseCurrency: new Big('0'),
             fee: new Big('1'),
-            feeInBaseCurrency: new Big('0.8854'),
+            feeInBaseCurrency: new Big('0.9238'),
             firstBuyDate: '2023-01-03',
             grossPerformance: new Big('27.33'),
             grossPerformancePercentage: new Big('0.30669144981412639406'),
-            grossPerformancePercentageWithCurrencyEffect: new Big('0.24112962014285697628'),
-            grossPerformanceWithCurrencyEffect: new Big('19.851974'),
-            investment: new Big('89.12'),
-            investmentWithCurrencyEffect: new Big('78.888024'),
+            grossPerformancePercentageWithCurrencyEffect: new Big('0.25235044599563974109'),
+            grossPerformanceWithCurrencyEffect: new Big('20.775774'),
+            investment: new Big('89.12'),  // Full investment for ROI, not time-weighted
+            investmentWithCurrencyEffect: new Big('82.329056'),
             marketPrice: 116.45,
             marketPriceInBaseCurrency: 103.10483,
             netPerformance: new Big('26.33'),
             netPerformancePercentage: new Big('0.295462322691126394'),
-            netPerformancePercentageWithCurrencyEffect: new Big('0.24112962014285697628'),
+            netPerformancePercentageWithCurrencyEffect: new Big('0.24158533138831892419'),
             netPerformanceWithCurrencyEffectMap: {
-              max: new Big('19.851974')
+              max: new Big('19.890374')
             },
             quantity: new Big('1'),
             symbol: 'GOOGL',
             tags: [],
-            timeWeightedInvestment: new Big('89.12'),
-            timeWeightedInvestmentWithCurrencyEffect: new Big('78.888024'),
+            timeWeightedInvestment: new Big('89.12'),  // For ROI = simple investment
+            timeWeightedInvestmentWithCurrencyEffect: new Big('82.329056'),
             transactionCount: 1,
             valueInBaseCurrency: new Big('103.10483')
           }
         ],
-        totalFeesWithCurrencyEffect: new Big('0.8854'),
+        totalFeesWithCurrencyEffect: new Big('0.9238'),
         totalInterestWithCurrencyEffect: new Big('0'),
-        totalInvestment: new Big('89.12'),
-        totalInvestmentWithCurrencyEffect: new Big('78.888024'),
+        totalInvestment: new Big('89.12'),  // Full investment for ROI
+        totalInvestmentWithCurrencyEffect: new Big('82.329056'),
         totalLiabilitiesWithCurrencyEffect: new Big('0')
       });
 
-      expect(portfolioSnapshot.historicalData.at(-1)).toMatchObject(
+      expect(portfolioSnapshot.historicalData[portfolioSnapshot.historicalData.length - 1]).toMatchObject(
         expect.objectContaining({
           netPerformance: 26.33,
           netPerformanceInPercentage: 0.295462322691126394,
-          netPerformanceInPercentageWithCurrencyEffect: 0.24112962014285697628,
-          netPerformanceWithCurrencyEffect: 19.851974,
-          totalInvestmentValueWithCurrencyEffect: 78.888024
+          netPerformanceInPercentageWithCurrencyEffect: 0.24158533138831892419,
+          netPerformanceWithCurrencyEffect: 19.890374,
+          totalInvestmentValueWithCurrencyEffect: 82.329056
         })
       );
     });
